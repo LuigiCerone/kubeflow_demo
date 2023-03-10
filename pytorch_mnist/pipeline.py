@@ -28,7 +28,7 @@ model_path = "model"
     packages_to_install=["wget", "pandas"],
     base_image="python:3.8"
 )
-def download_data(download_link: str, train_df: Output[Dataset], test_df: Output[Dataset]):
+def download_data(download_link: str, dataset: Output[Dataset]):
     import zipfile
     import wget
     import os
@@ -60,36 +60,32 @@ def download_data(download_link: str, train_df: Output[Dataset], test_df: Output
     train_df = pd.read_csv(train_data_path)
     test_df = pd.read_csv(test_data_path)
 
+    df = pd.concat([train_df, test_df], axis=1)
+    df.to_csv(dataset.path, index=False, header=False)
+
 
 @component(
-    packages_to_install=["pickle", "pandas"],
+    packages_to_install=["pandas"],
     base_image="python:3.8"
 )
-def demo(train_df: Input[Dataset], test_df: Input[Dataset]):
+def demo(dataset: Input[Dataset]):
     import logging
-    import os
-    import pickle
     import pandas as pd
 
-    logging.info("Called with %s", train_df.shape)
-
+    df = pd.read_csv(filepath_or_buffer=dataset.path)
+    logging.info("Called with %s", df.shape)
 
     return (print('Done!'))
 
 
-# define pipeline
 @dsl.pipeline(name="digit-recognizer-pipeline",
               description="Performs Preprocessing, training and prediction of digits")
-def digit_recognize_pipeline(download_link: str,
-                             data_path: str,
-                             load_data_path: str,
-                             preprocess_data_path: str,
-                             model_path: str
+def digit_recognize_pipeline(download_link: str
                              ):
 
     # Create download container.
-    download_container = download_data(download_link)
-
+    generate_datasets = download_data(download_link)
+    test = demo(generate_datasets.outputs['dataset'])
 
 
 if __name__ == '__main__':
