@@ -32,6 +32,8 @@ kubectl port-forward -n kubeflow svc/ml-pipeline-ui 8080:80
 
 Kubeflow UI will be at [http://localhost:8080](http://localhost:8080/)
 
+### How to delete local pods
+
 ```bash
 export PIPELINE_VERSION=1.8.5
 kubectl delete -k "github.com/kubeflow/pipelines/manifests/kustomize/env/platform-agnostic-pns?ref=$PIPELINE_VERSION"
