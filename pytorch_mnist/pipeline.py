@@ -19,16 +19,13 @@ import argparse
 
 
 download_link = 'https://github.com/kubeflow/examples/blob/master/digit-recognition-kaggle-competition/data/{file}.csv.zip?raw=true'
-load_data_path = "load"
-preprocess_data_path = "preprocess"
-model_path = "model"
 
 
 @component(
     packages_to_install=["wget", "pandas"],
     base_image="python:3.8"
 )
-def download_data(download_link: str, dataset: Output[Dataset]):
+def download_data(download_link: str, train: Output[Dataset], test: Output[Dataset]):
     import zipfile
     import wget
     import os
@@ -52,30 +49,60 @@ def download_data(download_link: str, dataset: Output[Dataset]):
 
     logging.info('Extraction completed, path is %s', data_path)
 
-    # Data Path
-    train_data_path = data_path + '/train.csv'
-    test_data_path = data_path + '/test.csv'
-
-    # Loading dataset into pandas
-    train_df = pd.read_csv(train_data_path)
-    test_df = pd.read_csv(test_data_path)
-
-    df = pd.concat([train_df, test_df], axis=1)
-    df.to_csv(dataset.path, index=False, header=False)
+    train_df = pd.read_csv(
+        f"{data_path}/train.csv").to_csv(train.path, index=False)
+    test_df = pd.read_csv(
+        f"{data_path}/test.csv").to_csv(test.path, index=False)
 
 
 @component(
-    packages_to_install=["pandas"],
+    packages_to_install=["pandas", "scikit-learn", "torch"],
     base_image="python:3.8"
 )
-def demo(dataset: Input[Dataset]):
+def pre_process_data(train: Input[Dataset], test: Input[Dataset], train_tensor_path: Output[Artifact], \
+                     val_tensor_path: Output[Artifact], test_tensor_path: Output[Artifact]):
     import logging
+    import torch
     import pandas as pd
 
-    df = pd.read_csv(filepath_or_buffer=dataset.path)
-    logging.info("Called with %s", df.shape)
+    from sklearn.model_selection import train_test_split
+    from torch.utils.data import DataLoader, TensorDataset
 
-    return (print('Done!'))
+    train_df = pd.read_csv(filepath_or_buffer=train.path)
+    test_df = pd.read_csv(filepath_or_buffer=test.path)
+
+    train_labels = train_df['label'].values
+    train_images = (train_df.iloc[:, 1:].values).astype('float32')
+    test_images = (test_df.iloc[:, :].values).astype('float32')
+
+    # Training and Validation Split
+    train_images, val_images, train_labels, val_labels = train_test_split(train_images, train_labels,
+                                                                          stratify=train_labels, random_state=123,
+                                                                          test_size=0.20)
+
+    train_images = train_images.reshape(train_images.shape[0], 28, 28)
+    val_images = val_images.reshape(val_images.shape[0], 28, 28)
+    test_images = test_images.reshape(test_images.shape[0], 28, 28)
+
+    # train
+    train_images_tensor = torch.tensor(train_images)/255.0
+    train_labels_tensor = torch.tensor(train_labels)
+    train_tensor = TensorDataset(train_images_tensor, train_labels_tensor)
+    torch.save(train_tensor, train_tensor_path.path)
+
+    # val
+    val_images_tensor = torch.tensor(val_images)/255.0
+    val_labels_tensor = torch.tensor(val_labels)
+    val_tensor = TensorDataset(val_images_tensor, val_labels_tensor)
+    torch.save(val_tensor, val_tensor_path.path)
+
+    # test
+    test_tensor = torch.tensor(test_images)/255.0
+    torch.save(test_tensor, test_tensor_path.path)
+
+    # train_loader = DataLoader(train_tensor, batch_size=16, num_workers=2, shuffle=True)
+    # val_loader = DataLoader(val_tensor, batch_size=16, num_workers=2, shuffle=True)
+    # test_loader = DataLoader(test_images_tensor, batch_size=16, num_workers=2, shuffle=False)
 
 
 @dsl.pipeline(name="digit-recognizer-pipeline",
@@ -85,7 +112,8 @@ def digit_recognize_pipeline(download_link: str
 
     # Create download container.
     generate_datasets = download_data(download_link)
-    test = demo(generate_datasets.outputs['dataset'])
+    test = pre_process_data(
+        generate_datasets.outputs['train'], generate_datasets.outputs['test'])
 
 
 if __name__ == '__main__':
@@ -99,10 +127,7 @@ if __name__ == '__main__':
     # create client that would enable communication with the Pipelines API server
     client = kfp.Client()
 
-    arguments = {"download_link": download_link,
-                 "load_data_path": load_data_path,
-                 "preprocess_data_path": preprocess_data_path,
-                 "model_path": model_path}
+    arguments = {"download_link": download_link}
 
     if args.run == 1:
         client.create_run_from_pipeline_func(digit_recognize_pipeline, arguments=arguments,
