@@ -66,7 +66,7 @@ def pre_process_data(train: Input[Dataset], test: Input[Dataset], train_tensor_p
     import pandas as pd
 
     from sklearn.model_selection import train_test_split
-    from torch.utils.data import DataLoader, TensorDataset
+    from torch.utils.data import TensorDataset
 
     train_df = pd.read_csv(filepath_or_buffer=train.path)
     test_df = pd.read_csv(filepath_or_buffer=test.path)
@@ -100,9 +100,133 @@ def pre_process_data(train: Input[Dataset], test: Input[Dataset], train_tensor_p
     test_tensor = torch.tensor(test_images)/255.0
     torch.save(test_tensor, test_tensor_path.path)
 
-    # train_loader = DataLoader(train_tensor, batch_size=16, num_workers=2, shuffle=True)
-    # val_loader = DataLoader(val_tensor, batch_size=16, num_workers=2, shuffle=True)
-    # test_loader = DataLoader(test_images_tensor, batch_size=16, num_workers=2, shuffle=False)
+
+@component(
+    packages_to_install=["pandas", "torch"],
+    base_image="python:3.8"
+)
+def train_model(train_tensor_path: Input[Artifact], \
+                     val_tensor_path: Input[Artifact], test_tensor_path: Input[Artifact]):
+    import torch
+    from torch.utils.data import DataLoader
+    import torch.nn as nn
+    import torch.nn.functional as F
+    import torch.optim as optim
+    
+    train_tensor = torch.load(train_tensor_path.path)
+    test_tensor = torch.load(test_tensor_path.path)
+    val_tensor = torch.load(val_tensor_path.path)
+
+    train_loader = DataLoader(train_tensor, batch_size=16, num_workers=2, shuffle=True)
+    val_loader = DataLoader(val_tensor, batch_size=16, num_workers=2, shuffle=True)
+    test_loader = DataLoader(test_tensor, batch_size=16, num_workers=2, shuffle=False)
+    
+    num_epoch = 1
+
+
+    class Net(nn.Module):
+        def __init__(self):
+            super(Net, self).__init__()
+            
+            self.conv_block = nn.Sequential(
+                nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1),
+                nn.BatchNorm2d(32),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
+                nn.BatchNorm2d(64),
+                nn.ReLU(inplace=True),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
+                nn.BatchNorm2d(128),
+                nn.ReLU(inplace=True),
+                nn.MaxPool2d(kernel_size=2, stride=2) 
+            )
+            
+            self.linear_block = nn.Sequential(
+                nn.Dropout(p=0.5),
+                nn.Linear(128*7*7, 128),
+                nn.BatchNorm1d(128),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.5),
+                nn.Linear(128, 64),
+                nn.BatchNorm1d(64),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.5),
+                nn.Linear(64, 10)
+            )
+            
+        def forward(self, x):
+            x = self.conv_block(x)
+            x = x.view(x.size(0), -1)
+            x = self.linear_block(x)
+            
+            return x
+    conv_model = Net()
+
+    optimizer = optim.Adam(params=conv_model.parameters(), lr=0.003)
+    criterion = nn.CrossEntropyLoss()
+
+    exp_lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
+
+    if torch.cuda.is_available():
+        conv_model = conv_model.cuda()
+        criterion = criterion.cuda()
+    
+    def train(num_epoch):
+        conv_model.train()
+        exp_lr_scheduler.step()
+        
+        for batch_idx, (data, target) in enumerate(train_loader):
+            data = data.unsqueeze(1)
+            data, target = data, target
+            
+            if torch.cuda.is_available():
+                data = data.cuda()
+                target = target.cuda()
+                
+            optimizer.zero_grad()
+            output = conv_model(data)
+            loss = criterion(output, target)
+            loss.backward()
+            optimizer.step()
+            
+            if (batch_idx + 1)% 100 == 0:
+                pass
+                print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                    num_epoch, (batch_idx + 1) * len(data), len(train_loader.dataset),
+                    100. * (batch_idx + 1) / len(train_loader), loss.data))
+    
+    def evaluate(data_loader):
+        conv_model.eval()
+        loss = 0
+        correct = 0
+        
+        for data, target in data_loader:
+            data = data.unsqueeze(1)
+            data, target = data, target
+            
+            if torch.cuda.is_available():
+                data = data.cuda()
+                target = target.cuda()
+            
+            output = conv_model(data)
+            
+            loss += F.cross_entropy(output, target, size_average=False).data
+
+            pred = output.data.max(1, keepdim=True)[1]
+            correct += pred.eq(target.data.view_as(pred)).cpu().sum()
+            
+        loss /= len(data_loader.dataset)
+            
+        print('\nAverage Val Loss: {:.4f}, Val Accuracy: {}/{} ({:.3f}%)\n'.format(
+            loss, correct, len(data_loader.dataset),
+            100. * correct / len(data_loader.dataset)))
+    
+
+    for n in range(num_epoch):
+        train(n)
+        evaluate(val_loader)
+
 
 
 @dsl.pipeline(name="digit-recognizer-pipeline",
@@ -112,8 +236,13 @@ def digit_recognize_pipeline(download_link: str
 
     # Create download container.
     generate_datasets = download_data(download_link)
-    test = pre_process_data(
+    preprocess_tensors = pre_process_data(
         generate_datasets.outputs['train'], generate_datasets.outputs['test'])
+    
+    model = train_model(preprocess_tensors.outputs['train_tensor_path'], \
+                        preprocess_tensors.outputs['val_tensor_path'], \
+                        preprocess_tensors.outputs['test_tensor_path'])
+
 
 
 if __name__ == '__main__':
