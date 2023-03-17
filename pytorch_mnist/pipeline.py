@@ -6,9 +6,10 @@ from kfp.v2.dsl import (
     Input,
     Output,
     Artifact,
-    Dataset,
+    Dataset
 )
 import argparse
+from kubernetes import client as k8s_client
 
 
 download_link = 'https://github.com/kubeflow/examples/blob/master/digit-recognition-kaggle-competition/data/{file}.csv.zip?raw=true'
@@ -112,7 +113,6 @@ def digit_recognize_pipeline(download_link: str
                         preprocess_tensors.outputs['test_tensor_path'])
 
 
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="MNIST Kubeflow example")
     parser.add_argument('--run', action='store_true')
@@ -126,9 +126,14 @@ if __name__ == '__main__':
 
     arguments = {"download_link": download_link}
 
+    pipeline_conf = kfp.dsl.PipelineConf()
+    pipeline_conf.set_image_pull_secrets([k8s_client.V1ObjectReference(name="registry-secret")])
+
     if args.run == 1:
         client.create_run_from_pipeline_func(digit_recognize_pipeline, arguments=arguments,
-                                             experiment_name="mnist", mode=kfp.dsl.PipelineExecutionMode.V2_COMPATIBLE)
+                                             experiment_name="mnist", 
+                                             pipeline_conf=pipeline_conf, 
+                                             mode=kfp.dsl.PipelineExecutionMode.V2_COMPATIBLE)
     else:
         kfp.compiler.Compiler(mode=kfp.dsl.PipelineExecutionMode.V2_COMPATIBLE).compile(
             pipeline_func=digit_recognize_pipeline, package_path='output_mnist.yaml')

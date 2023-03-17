@@ -5,7 +5,7 @@ inputs:
 - {name: test_tensor_path, type: Artifact}
 implementation:
   container:
-    image: kind-registry:5000/test_kubeflow_train_model
+    image: luigicerone/kubeflow
     command:
     - sh
     - -c

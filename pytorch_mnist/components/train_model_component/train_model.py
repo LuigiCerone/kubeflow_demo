@@ -1,8 +1,5 @@
 import sys
-import os
-
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.dirname(SCRIPT_DIR))
+sys.path.append('..')
 
 from kfp.v2.dsl import (
     component,
@@ -10,8 +7,8 @@ from kfp.v2.dsl import (
     Artifact
 )
 
-from train_model_component.model import Net
-from train_model_component.utils import train, evaluate
+import model
+import methods
 
 @component(
     packages_to_install=["pandas", "torch"],
@@ -37,7 +34,7 @@ def train_model(train_tensor_path: Input[Artifact], \
     
     num_epoch = 1
     
-    conv_model = Net()
+    conv_model = model.Net()
 
     optimizer = optim.Adam(params=conv_model.parameters(), lr=0.003)
     criterion = nn.CrossEntropyLoss()
@@ -50,5 +47,5 @@ def train_model(train_tensor_path: Input[Artifact], \
     
     
     for n in range(num_epoch):
-        train(num_epoch, conv_model, exp_lr_scheduler, train_loader, optimizer, criterion)
-        evaluate(val_loader, conv_model)
+        methods.train(num_epoch, conv_model, exp_lr_scheduler, train_loader, optimizer, criterion)
+        methods.evaluate(val_loader, conv_model)
