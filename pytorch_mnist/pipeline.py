@@ -22,7 +22,6 @@ download_link = 'https://github.com/kubeflow/examples/blob/master/digit-recognit
 def download_data(download_link: str, train: Output[Dataset], test: Output[Dataset]):
     import zipfile
     import wget
-    import os
     import logging
     import pandas as pd
 
@@ -55,7 +54,6 @@ def download_data(download_link: str, train: Output[Dataset], test: Output[Datas
 )
 def pre_process_data(train: Input[Dataset], test: Input[Dataset], train_tensor_path: Output[Artifact], \
                      val_tensor_path: Output[Artifact], test_tensor_path: Output[Artifact]):
-    import logging
     import torch
     import pandas as pd
 
